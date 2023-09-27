@@ -127,7 +127,6 @@ namespace NativeWebSocket
     {
         public static WebSocketCloseCode ParseCloseCodeEnum(int closeCode)
         {
-
             if (WebSocketCloseCode.IsDefined(typeof(WebSocketCloseCode), closeCode))
             {
                 return (WebSocketCloseCode)closeCode;
@@ -418,7 +417,7 @@ namespace NativeWebSocket
                 this.headers = headers;
             }
 
-            subprotocols = new List<string> {subprotocol};
+            subprotocols = new List<string> { subprotocol };
 
             string protocol = uri.Scheme;
             if (!protocol.Equals("ws") && !protocol.Equals("wss"))
@@ -464,7 +463,8 @@ namespace NativeWebSocket
                     m_Socket.Options.SetRequestHeader(header.Key, header.Value);
                 }
 
-                foreach (string subprotocol in subprotocols) {
+                foreach (string subprotocol in subprotocols)
+                {
                     m_Socket.Options.AddSubProtocol(subprotocol);
                 }
 
@@ -643,51 +643,59 @@ namespace NativeWebSocket
             WebSocketCloseCode closeCode = WebSocketCloseCode.Abnormal;
             await new WaitForBackgroundThread();
 
-            ArraySegment<byte> buffer = new ArraySegment<byte>(new byte[8192]);
+            var receiveBytes = new List<byte>();
+            var buffer = new ArraySegment<byte>(new byte[8192]);
+
             try
             {
                 while (m_Socket.State == System.Net.WebSockets.WebSocketState.Open)
                 {
-                    WebSocketReceiveResult result = null;
+                    ValueWebSocketReceiveResult result = default;
 
-                    using (var ms = new MemoryStream())
+                    // using (var ms = new MemoryStream())
+                    // {
+                    do
                     {
-                        do
-                        {
-                            result = await m_Socket.ReceiveAsync(buffer, m_CancellationToken);
-                            ms.Write(buffer.Array, buffer.Offset, result.Count);
-                        }
-                        while (!result.EndOfMessage);
+                        result = await m_Socket.ReceiveAsync(
+                            new Memory<byte>(buffer.Array),
+                            m_CancellationToken);
 
-                        ms.Seek(0, SeekOrigin.Begin);
+                        receiveBytes.AddRange(new ArraySegment<byte>(buffer.Array, 0, result.Count));
+                        // ms.Write(buffer.Array, buffer.Offset, result.Count);
+                    }
+                    while (!result.EndOfMessage);
 
-                        if (result.MessageType == WebSocketMessageType.Text)
-                        {
-                            lock (IncomingMessageLock)
-                            {
-                              m_MessageList.Add(ms.ToArray());
-                            }
+                    // ms.Seek(0, SeekOrigin.Begin);
 
-                            //using (var reader = new StreamReader(ms, Encoding.UTF8))
-                            //{
-                            //	string message = reader.ReadToEnd();
-                            //	OnMessage?.Invoke(this, new MessageEventArgs(message));
-                            //}
-                        }
-                        else if (result.MessageType == WebSocketMessageType.Binary)
+                    if (result.MessageType == WebSocketMessageType.Text)
+                    {
+                        lock (IncomingMessageLock)
                         {
-                            lock (IncomingMessageLock)
-                            {
-                              m_MessageList.Add(ms.ToArray());
-                            }
+                            m_MessageList.Add(receiveBytes.ToArray());
+                            receiveBytes.Clear();
                         }
-                        else if (result.MessageType == WebSocketMessageType.Close)
+
+                        //using (var reader = new StreamReader(ms, Encoding.UTF8))
+                        //{
+                        //	string message = reader.ReadToEnd();
+                        //	OnMessage?.Invoke(this, new MessageEventArgs(message));
+                        //}
+                    }
+                    else if (result.MessageType == WebSocketMessageType.Binary)
+                    {
+                        lock (IncomingMessageLock)
                         {
-                            await Close();
-                            closeCode = WebSocketHelpers.ParseCloseCodeEnum((int)result.CloseStatus);
-                            break;
+                            m_MessageList.Add(receiveBytes.ToArray());
+                            receiveBytes.Clear();
                         }
                     }
+                    else if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        await Close();
+                        //closeCode = WebSocketHelpers.ParseCloseCodeEnum((int)result.CloseStatus);
+                        break;
+                    }
+                    // }
                 }
             }
             catch (Exception)
